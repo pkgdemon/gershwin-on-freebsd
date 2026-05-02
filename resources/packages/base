@@ -87,6 +87,8 @@ FreeBSD-nvme-tools
 FreeBSD-openssl
 FreeBSD-openssl-dev
 FreeBSD-openssl-lib
+FreeBSD-pam-dev
+FreeBSD-pam-lib
 FreeBSD-periodic
 FreeBSD-pf
 FreeBSD-pkg-bootstrap
