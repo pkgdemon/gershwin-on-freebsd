@@ -59,6 +59,7 @@ FreeBSD-libcuse
 FreeBSD-libdwarf
 FreeBSD-libevent1
 FreeBSD-libexecinfo
+FreeBSD-libexecinfo-dev
 FreeBSD-libipt
 FreeBSD-libldns
 FreeBSD-libmagic
