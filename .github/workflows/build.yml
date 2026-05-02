@@ -1,0 +1,48 @@
+name: Build Gershwin-on-FreeBSD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-freebsd-15-amd64:
+    name: FreeBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ISO inside FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "15.0"
+          usesh: true
+          sync: rsync
+          copyback: true
+          cpu: 4
+          mem: 8192
+          prepare: |
+            pkg install -y git-lite zsync wget bash zip librsvg2 ca_root_nss transmission-cli fdupes
+          run: |
+            set -e
+            kldload zfs || true
+            kldload tmpfs || true
+            kldload nullfs || true
+            kldload geom_uzip || true
+            mkdir -p /usr/local/freebsd-build/uzip /usr/local/freebsd-build/cdroot
+            mount -t tmpfs tmpfs /usr/local/freebsd-build/uzip || true
+            mount -t tmpfs tmpfs /usr/local/freebsd-build/cdroot || true
+            export TARGET_VERSION=15
+            export TARGET_ARCH=amd64
+            /bin/sh ./build.sh
+            ls -lh /usr/local/freebsd-build/iso/
+            mkdir -p artifacts/FreeBSD/15/amd64
+            cp /usr/local/freebsd-build/iso/*.iso* artifacts/FreeBSD/15/amd64/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gershwin-on-freebsd-15-amd64
+          path: artifacts/FreeBSD/15/amd64
+          if-no-files-found: error

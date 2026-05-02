@@ -59,6 +59,7 @@ FreeBSD-libcuse
 FreeBSD-libdwarf
 FreeBSD-libevent1
 FreeBSD-libexecinfo
+FreeBSD-libexecinfo-dev
 FreeBSD-libipt
 FreeBSD-libldns
 FreeBSD-libmagic
@@ -86,6 +87,8 @@ FreeBSD-nvme-tools
 FreeBSD-openssl
 FreeBSD-openssl-dev
 FreeBSD-openssl-lib
+FreeBSD-pam-dev
+FreeBSD-pam-lib
 FreeBSD-periodic
 FreeBSD-pf
 FreeBSD-pkg-bootstrap
