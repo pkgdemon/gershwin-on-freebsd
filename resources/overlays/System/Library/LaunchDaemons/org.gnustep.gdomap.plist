@@ -16,6 +16,14 @@
   testing surfaces routing issues we revisit by adding a one-shot
   plist that generates the iface config first.
 
+  -f flag: avoid fork(). Without it, gdomap forks a daemon child
+  and the parent exits status=0; launchd sees the parent exit and
+  KeepAlive-respawns immediately — but the daemon child still
+  holds the UDP port, so the respawn fails with "Unable to bind
+  address to UDP socket. Perhaps gdomap is already running" and
+  loops forever. -f keeps gdomap in the foreground so launchd
+  tracks the actual daemon PID.
+
   RunAtLoad+KeepAlive — gdomap needs to be up for dshelper to
   register, and we want it back automatically if it crashes.
 -->
@@ -26,6 +34,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/System/Library/Tools/gdomap</string>
+        <string>-f</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

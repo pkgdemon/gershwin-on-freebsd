@@ -270,8 +270,19 @@ EFS
     mkdir -p "${RELEASE_DIR}/usr/local/share/freebsd"
     echo "gershwin" > "${RELEASE_DIR}/usr/local/share/freebsd/desktop"
 
-    # Update ldconfig cache
-    chroot "${RELEASE_DIR}" ldconfig -m /usr/local/lib
+    # Update ldconfig cache. /System/Library/Libraries holds libdispatch,
+    # libobjc, libgnustep-base, libgnustep-corebase from gershwin-developer's
+    # GNUstep install — daemons like dshelper link against libdispatch and
+    # need rtld to find it via the hints DB. /usr/local/libdata/ldconfig/
+    # entry is for /etc/rc.d/ldconfig if rc ever runs (it doesn't under
+    # launchd PID 1, but the file is harmless and future-proof). The
+    # build-time `ldconfig -m` primes /var/run/ld-elf.so.hints in the uzip;
+    # under launchd that file isn't overwritten at boot, so the hints
+    # persist into the live system.
+    mkdir -p "${RELEASE_DIR}/usr/local/libdata/ldconfig"
+    echo "/System/Library/Libraries" \
+        > "${RELEASE_DIR}/usr/local/libdata/ldconfig/freebsd-launchd"
+    chroot "${RELEASE_DIR}" ldconfig -m /usr/local/lib /System/Library/Libraries
 }
 
 build_gershwin_components() {
