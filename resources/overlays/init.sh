@@ -56,11 +56,20 @@ if [ "`ps -o command 1 | tail -n 1 | ( read c o; echo ${o} )`" = "-s" ]; then
   sh
 fi
 
-# === boot_mute handling ===
+# === Output handling ===
+# Force fd 1 + fd 2 to /dev/console so set -x and any echo are visible.
+# /sbin/init (and /rescue/init) hand children fds that may not be the
+# console — without this, xtrace goes to nowhere and the boot looks
+# silent after the kernel hands off. With dual console (loader.conf
+# sets console="comconsole vidconsole"), /dev/console mirrors to
+# vidconsole AND the serial port; CI captures the serial side.
+# boot_mute kept as the historical off-switch — commented out in
+# loader.mute.d/loader.conf during Phase 1/2 diagnostic work.
 if [ "$(kenv boot_mute 2>/dev/null)" = "YES" ] ; then
   exec 1>>/dev/null 2>&1
 else
-  echo -e  '\e[1;37m' > /dev/console # Bold black letters to increase readability
+  exec >/dev/console 2>&1
+  echo -e '\e[1;37m' # Bold black letters to increase readability
 fi
 
 set -x
