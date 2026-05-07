@@ -152,9 +152,10 @@ sed -i '' -e 's|# This script is intended to be invoked by a desktop file|exec 1
     /sysroot/usr/local/bin/start-hello 2>/dev/null || true
 
 # === SMBIOS-derived hostname ===
-SMBIOS_HOST=$(kenv -q "smbios.system.product" | xargs | sed -e 's| |-|g')
+# /rescue doesn't include xargs; use sed alone to dash-collapse spaces.
+SMBIOS_HOST=$(kenv -q "smbios.system.product" 2>/dev/null | sed -e 's/^ *//' -e 's/ *$//' -e 's| |-|g')
 if [ -n "$SMBIOS_HOST" ]; then
-    hostname "$SMBIOS_HOST"
+    hostname "$SMBIOS_HOST" 2>/dev/null || true
     # Persist via rc.conf so rc.d/hostname doesn't clobber it later
     echo "hostname=\"$SMBIOS_HOST\"" >> /sysroot/etc/rc.conf
 fi
@@ -169,14 +170,28 @@ if [ "${PRODUCT}" = "VirtualBox" ] ; then
 fi
 
 # === Live-mode rc.conf overrides ===
+# CRITICAL: root_rw_mount="NO" prevents /etc/rc.d/root from running
+# `mount -uw /` after the chroot. Inside the chroot, mount(8) inspects
+# the kernel mount table — which reports the kernel's actual root as
+# cd9660 — and dispatches mount_cd9660 -uw, which fails with
+# "Operation not supported" and aborts the entire boot. The unionfs
+# at /sysroot is already writable (tmpfs upper) so we don't need a
+# rw remount. Same fix as freebsd-livecd-unionfs/overlays/etc/rc.conf:14.
+#
+# kld_list is REASSIGNED (not appended) because FreeBSD sh doesn't
+# parse `var+="value"` — it interprets the whole line as a command
+# and fails with "not found" when /etc/rc sources rc.conf. The full
+# list combines configure_system's defaults (linux linux64 cuse fusefs
+# hgame) with the live-mode additions.
 {
+    echo 'root_rw_mount="NO"'
     echo 'sendmail_enable="NO"'
     echo 'sendmail_submit_enable="NO"'
     echo 'sendmail_outbound_enable="NO"'
     echo 'sendmail_msp_queue_enable="NO"'
     echo 'linux_enable="YES"'
     echo 'dbus_enable="YES"'
-    echo 'kld_list+="cuse ig4 iicbus iichid utouch asmc if_urndis if_cdce if_ipheth"'
+    echo 'kld_list="linux linux64 cuse fusefs hgame ig4 iicbus iichid utouch asmc if_urndis if_cdce if_ipheth"'
     echo 'allscreens_kbdflags="-b quiet.off"'
 } >> /sysroot/etc/rc.conf
 
@@ -194,14 +209,20 @@ sed -i '' -e 's|\&\& __wait 3|\&\& __wait 1|g' /sysroot/etc/rc.d/initgfx 2>/dev/
 kbdcontrol -b quiet.off 2>/dev/null || true
 
 # === Monkey patch from EFI variable ===
-EFIVAR=$(efivar -Al 2>/dev/null | grep -e "[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-MonkeyPatch$")
-if [ -n "${EFIVAR}" ] ; then
-  echo "Monkey patch requested by EFI variable"
-  MONKEY_PATCH=YES
+# /rescue lacks grep, so the EFI-variable detection only runs if
+# /usr/bin/grep exists (it doesn't, pre-chroot). Fall through to the
+# kenv-based check, which is the path actually exercised in CI.
+MONKEY_PATCH=NO
+if command -v grep >/dev/null 2>&1; then
+    EFIVAR=$(efivar -Al 2>/dev/null | grep -e "[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-[0-9a-z]*-MonkeyPatch$" 2>/dev/null)
+    if [ -n "${EFIVAR}" ] ; then
+      echo "[init.sh] Monkey patch requested by EFI variable"
+      MONKEY_PATCH=YES
+    fi
 fi
 
 if [ "$(kenv monkey_patch 2>/dev/null)" != "" ] ; then
-  echo "Monkey patch requested by kenv"
+  echo "[init.sh] Monkey patch requested by kenv"
   MONKEY_PATCH=YES
 fi
 
@@ -229,8 +250,10 @@ fi
 
 # === Pre-chroot cleanup ===
 export TERM=xterm
-clear > /dev/console
-conscontrol mute on >/dev/null 2>&1
+# /rescue lacks clear; emit ANSI clear directly. Suppress on serial
+# where the escape just looks like garbage.
+printf '\033[2J\033[H' >/dev/console 2>/dev/null || true
+conscontrol mute on >/dev/null 2>&1 || true
 
 # === Tell init to chroot into /sysroot after we exit ===
 # init.c reads init_chroot kenv at line 333, AFTER init_script (line
