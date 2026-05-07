@@ -344,13 +344,19 @@ build_launchd() {
         "${RELEASE_DIR}/usr/libexec/launchd-getty-wrapper"
 
     # Install bedrock LaunchDaemon plists from freebsd-launchd's overlays.
-    # Skip kmodloader.plist — Phase 2 doesn't build the kmodloader binary
-    # (Phase 3 work), so its plist would respawn-loop forever under
-    # KeepAlive=true.
+    # Skips:
+    # - kmodloader.plist: Phase 2 doesn't build the kmodloader binary
+    #   (Phase 3 work). Its plist would respawn-loop forever.
+    # - getty.console.plist + getty.vty0.plist: gershwin uses LoginWindow
+    #   as the login UI. A text-mode getty is redundant and was looping
+    #   on login_tty failures because launchd's session controls the
+    #   tty. We don't ship them at all rather than fight the conflict.
     install -d "${RELEASE_DIR}/System/Library/LaunchDaemons"
     for plist in "${RELEASE_DIR}/Developer/Library/Sources/freebsd-launchd/overlays/System/Library/LaunchDaemons/"*.plist; do
         case "$(basename "$plist")" in
-            org.freebsd.kmodloader.plist) continue ;;
+            org.freebsd.kmodloader.plist)    continue ;;
+            org.freebsd.getty.console.plist) continue ;;
+            org.freebsd.getty.vty0.plist)    continue ;;
         esac
         install -m 644 "$plist" "${RELEASE_DIR}/System/Library/LaunchDaemons/"
     done

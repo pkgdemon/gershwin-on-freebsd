@@ -68,21 +68,23 @@ eval spawn qemu-system-x86_64 \
     -display none -serial stdio \
     -no-reboot
 
-# Wait for a marker that proves the multi-user rc has started. Strict
-# on purpose: we DON'T accept "Welcome to FreeBSD" because the loader's
-# beastie banner matches that string before the kernel even boots, and
-# that gave us a false-positive 1-minute pass on commit 7caefbf. The
-# accepted markers all fire from inside multi-user (well past kernel +
-# /init.sh + chroot).
+# Wait for a marker that proves multi-user is up. Phase 2 retired
+# getty (gershwin uses LoginWindow as the GUI login, not text-mode
+# getty), so we don't watch for "login:" anymore. Acceptable markers:
+#   - LoginWindow[                 — gershwin's GUI greeter is running
+#     (syslog tag for any LoginWindow-emitted log line)
+#   - Successfully registered      — Eau theme bridge registered with
+#     gdomap, proves DO + LoginWindow chain reached
+#   - em0: leased                  — dhcpcd plist worked end-to-end
+#     (network reach as a fallback signal)
 expect {
     timeout {
         puts "\nFAIL: no multi-user marker within 10 minutes"
         exit 1
     }
-    "login:"                       { puts "\nOK: getty login prompt reached" }
-    "Starting local daemons"       { puts "\nOK: rc reached local-daemons phase" }
-    "Setting hostname"             { puts "\nOK: rc set hostname (multi-user)" }
-    "Mounting local filesystems"   { puts "\nOK: rc mounted local fs (multi-user)" }
+    "LoginWindow\["               { puts "\nOK: LoginWindow is running" }
+    "Successfully registered"     { puts "\nOK: DO + theme bridge registered" }
+    -re {em\w+: leased}           { puts "\nOK: dhcpcd leased an IP" }
 }
 
 close
