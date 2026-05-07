@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  org.gershwin.loginwindow.plist
+
+  Replaces loginwindow_enable=YES rc.d. Spawns gershwin's LoginWindow
+  greeter — a GNUstep app at /System/Library/CoreServices/Applications/
+  LoginWindow.app/LoginWindow, wrapped by /System/Library/Scripts/
+  LoginWindow.sh which sources GNUstep.sh, sets DISPLAY=:0, and exec's
+  the binary.
+
+  Source: gershwin-developer/Library/Sources/gershwin-components/
+  LoginWindow/ (Makefile installs the .sh wrapper + the rc.d).
+
+  The original rc.d used /usr/sbin/daemon -r -f -o $logfile
+  $procname --pid-file=$pidfile to background it with restart-on-
+  death + logfile + pidfile. launchd does all that natively
+  (KeepAlive, StandardOutPath, native PID tracking) — no daemon(8)
+  needed.
+
+  StandardOutPath / StandardErrorPath aren't yet implemented in
+  freebsd-launchd's plist parser (silently ignored). Kept here for
+  the eventual implementation; logs land at launchd's default sink
+  in the meantime.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.gershwin.loginwindow</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/System/Library/Scripts/LoginWindow.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/LoginWindow.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/LoginWindow.log</string>
+</dict>
+</plist>

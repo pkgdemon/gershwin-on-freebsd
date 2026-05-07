@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  org.gnustep.gdomap.plist
+
+  GNUstep Distributed Objects port mapper. Required by dshelper (and
+  any other DO consumer) to look up well-known service names. The
+  legacy rc.d/dshelper script started gdomap inline before dshelper;
+  splitting them into their own plists keeps each daemon a single
+  process, matching launchd's one-process-per-job model.
+
+  No -a flag: gdomap auto-detects interfaces. The original rc.d
+  generated /var/run/gdomap-iface.conf via an awk pipeline over
+  ifconfig output and passed it via -a. For livecd / single-NIC
+  hosts the auto-detect default is fine; if multi-NIC hardware
+  testing surfaces routing issues we revisit by adding a one-shot
+  plist that generates the iface config first.
+
+  RunAtLoad+KeepAlive — gdomap needs to be up for dshelper to
+  register, and we want it back automatically if it crashes.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.gnustep.gdomap</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/System/Library/Tools/gdomap</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

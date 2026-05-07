@@ -25,7 +25,6 @@ FreeBSD-ctf
 FreeBSD-cxgbe-tools
 FreeBSD-devd
 FreeBSD-devmatch
-FreeBSD-dhclient
 FreeBSD-dma
 FreeBSD-dtrace
 FreeBSD-dwatch
@@ -111,7 +110,6 @@ FreeBSD-utilities
 FreeBSD-utilities-dev
 FreeBSD-vi
 FreeBSD-vt-data
-FreeBSD-wpa
 FreeBSD-xz
 FreeBSD-xz-dev
 FreeBSD-yp

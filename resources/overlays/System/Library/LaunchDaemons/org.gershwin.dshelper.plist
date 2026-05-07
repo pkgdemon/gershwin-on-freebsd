@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  org.gershwin.dshelper.plist
+
+  Replaces dshelper_enable=YES rc.d. dshelper is gershwin's
+  DirectoryServices daemon — handles user/group/auth lookups on
+  behalf of gershwin desktop components.
+
+  Source: gershwin-developer/Library/Sources/gershwin-components/
+  DirectoryServices/dshelper/.
+
+  The original rc.d/dshelper composite-started gdomap before dshelper;
+  here, gdomap has its own plist (org.gnustep.gdomap.plist), and
+  launchd's KeepAlive will retry dshelper if it starts before gdomap
+  is ready. Both end up running.
+
+  RunAtLoad=true so dshelper comes up at boot. KeepAlive=true so
+  launchd respawns it if it crashes (the rc.d's pidfile-based
+  daemonization is replaced by launchd's native PID tracking).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.gershwin.dshelper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/System/Library/Tools/dshelper</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

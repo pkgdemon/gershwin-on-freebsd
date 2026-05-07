@@ -241,7 +241,6 @@ devfs_enable="YES"
 devfs_system_ruleset="system"
 moused_enable="YES"
 dbus_enable="YES"
-loginwindow_enable="YES"
 webcamd_enable="YES"
 cupsd_enable="YES"
 avahi_daemon_enable="YES"
@@ -253,7 +252,6 @@ dsbdriverd_enable="YES"
 initgfx_enable="YES"
 initgfx_menu="NO"
 smartd_enable="YES"
-dshelper_enable="YES"
 EFS
 
     # Initialize Directory Services and create live user
@@ -300,6 +298,57 @@ build_gershwin_components() {
     umount "${RELEASE_DIR}/proc" || true
     umount "${RELEASE_DIR}/dev" || true
 
+    rm -f "${RELEASE_DIR}/etc/resolv.conf"
+}
+
+build_launchd() {
+    log "Building freebsd-launchd from source..."
+
+    # Host-side git clone writing into the chroot's Sources tree —
+    # mirrors gershwin's existing build.sh:281 pattern (clone destination
+    # is inside RELEASE_DIR; git itself runs on the host). Lands as a
+    # sibling to gershwin-developer's Library/Sources/ trees.
+    git clone --depth 1 https://github.com/pkgdemon/freebsd-launchd \
+        "${RELEASE_DIR}/Developer/Library/Sources/freebsd-launchd"
+
+    cp /etc/resolv.conf "${RELEASE_DIR}/etc/resolv.conf"
+    mount -t devfs devfs "${RELEASE_DIR}/dev" 2>/dev/null || true
+
+    # make-launchd.sh checks for /System/Library/Libraries/{libdispatch,
+    # libobjc,libgnustep-base,libgnustep-corebase}.so before building
+    # (which build_gershwin_components just installed) and runs gmake
+    # against the launchd src/ tree. Result: /sbin/launchd + /sbin/launchctl.
+    chroot "${RELEASE_DIR}" sh -c "
+        cd /Developer/Library/Sources/freebsd-launchd &&
+        ./make-launchd.sh
+    "
+
+    # Install the getty wrapper from freebsd-launchd's overlays (the
+    # existing shell-wrapper exception, referenced by org.freebsd.getty.*
+    # plists). make-launchd.sh installs only the launchd binaries; the
+    # overlay tree is copied separately.
+    install -d "${RELEASE_DIR}/usr/libexec"
+    install -m 755 \
+        "${RELEASE_DIR}/Developer/Library/Sources/freebsd-launchd/overlays/usr/libexec/launchd-getty-wrapper" \
+        "${RELEASE_DIR}/usr/libexec/launchd-getty-wrapper"
+
+    # Install bedrock LaunchDaemon plists from freebsd-launchd's overlays.
+    # Skip kmodloader.plist — Phase 2 doesn't build the kmodloader binary
+    # (Phase 3 work), so its plist would respawn-loop forever under
+    # KeepAlive=true.
+    install -d "${RELEASE_DIR}/System/Library/LaunchDaemons"
+    for plist in "${RELEASE_DIR}/Developer/Library/Sources/freebsd-launchd/overlays/System/Library/LaunchDaemons/"*.plist; do
+        case "$(basename "$plist")" in
+            org.freebsd.kmodloader.plist) continue ;;
+        esac
+        install -m 644 "$plist" "${RELEASE_DIR}/System/Library/LaunchDaemons/"
+    done
+
+    # Install gershwin-specific LaunchDaemon plists (gdomap, dshelper,
+    # loginwindow) from this repo's overlays/System/.
+    cp -R "${OVERLAYS_DIR}/System/." "${RELEASE_DIR}/System/"
+
+    umount "${RELEASE_DIR}/dev" 2>/dev/null || true
     rm -f "${RELEASE_DIR}/etc/resolv.conf"
 }
 
@@ -432,6 +481,7 @@ setup_workspace
 install_base_system
 install_gershwin_software
 build_gershwin_components
+build_launchd
 configure_system
 downsize_system
 prepare_boot_env

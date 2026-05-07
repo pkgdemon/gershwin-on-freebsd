@@ -255,16 +255,13 @@ export TERM=xterm
 printf '\033[2J\033[H' >/dev/console 2>/dev/null || true
 conscontrol mute on >/dev/null 2>&1 || true
 
-# === Tell init to chroot into /sysroot after we exit ===
-# init.c reads init_chroot kenv at line 333, AFTER init_script (line
-# 326-331) has run. Setting init_chroot here is what makes the chroot
-# happen.
-echo "[init.sh] setting init_chroot=/sysroot"
-kenv init_chroot=/sysroot
-
-# Unset init_script so init doesn't try to re-run us after the chroot.
-kenv -u init_script 2>/dev/null || true
-kenv -u init_shell  2>/dev/null || true
-
-echo "[init.sh] handing off to /sbin/init for chroot+multi-user"
-exit 0
+# === Hand off PID 1 to launchd inside the chroot ===
+# Phase 2 (Option D): the kernel exec'd this script as PID 1 directly
+# (loader.conf sets init_path="/init.sh" and the #!/rescue/sh shebang
+# triggers imgact_shell). exec chroot replaces the shell-script PID 1
+# with /sbin/launchd inside /sysroot. launchd reads
+# /System/Library/LaunchDaemons/*.plist and starts the bedrock services
+# (varrun, syslogd, cron, getty, dhcpcd) plus the gershwin daemons
+# (gdomap, dshelper, loginwindow).
+echo "[init.sh] exec chroot /sysroot /sbin/launchd"
+exec chroot /sysroot /sbin/launchd

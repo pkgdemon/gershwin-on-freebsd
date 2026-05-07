@@ -9,6 +9,7 @@ cairo
 cmake-core
 cups
 cups-filters
+dhcpcd
 curl
 dbus
 drm-kmod
@@ -80,6 +81,7 @@ squashfs-tools-ng
 sudo
 tiff
 wget
+wpa_supplicant
 xcb-util
 xcb-util-cursor
 xcb-util-image
