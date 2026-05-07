@@ -24,6 +24,15 @@
 # Adapted from probono/freebsd-livecd-unionfs init.sh (BSD-2-Clause)
 # and the previous gershwin-on-freebsd /boot/init_script.
 
+# === Output handling — runs FIRST so everything below is visible ===
+# /sbin/init (and /rescue/init) hand children stderr/stdout that may
+# not be /dev/console — without this, all our shell output goes to a
+# void and the boot LOOKS silent right after the kernel hands off.
+# Kernel printf messages (GEOM_LABEL etc.) come through because they're
+# written by the kernel directly, not by us.
+exec >/dev/console 2>&1
+echo "[init.sh] starting"
+
 # === Monkey patch from kenv (early — runs before unionfs setup) ===
 if [ "$(kenv -q monkey_patch_init_script)" != "" ] ; then
   kenv -q -u monkey_patch_init_script # Prevent infinite loop
@@ -56,25 +65,21 @@ if [ "`ps -o command 1 | tail -n 1 | ( read c o; echo ${o} )`" = "-s" ]; then
   sh
 fi
 
-# === Output handling ===
-# Force fd 1 + fd 2 to /dev/console so set -x and any echo are visible.
-# /sbin/init (and /rescue/init) hand children fds that may not be the
-# console — without this, xtrace goes to nowhere and the boot looks
-# silent after the kernel hands off. With dual console (loader.conf
-# sets console="comconsole vidconsole"), /dev/console mirrors to
-# vidconsole AND the serial port; CI captures the serial side.
-# boot_mute kept as the historical off-switch — commented out in
-# loader.mute.d/loader.conf during Phase 1/2 diagnostic work.
+# === Optional silencing (boot_mute) ===
+# boot_mute kept as historical off-switch — commented out in
+# loader.mute.d/loader.conf during Phase 1/2. If a future build
+# re-enables it, this branch overrides our top-of-script redirect to
+# /dev/null. For now this branch never fires.
 if [ "$(kenv boot_mute 2>/dev/null)" = "YES" ] ; then
   exec 1>>/dev/null 2>&1
 else
-  exec >/dev/console 2>&1
   echo -e '\e[1;37m' # Bold black letters to increase readability
 fi
 
 set -x
 
 # === Defensive module loads (also loaded by loader, but be safe) ===
+echo "[init.sh] kldload defensives"
 kldload geom_uzip 2>/dev/null || true
 kldload unionfs   2>/dev/null || true
 kldload tmpfs     2>/dev/null || true
@@ -82,27 +87,35 @@ kldload tmpfs     2>/dev/null || true
 # === Vnode-mount the compressed rootfs ===
 # /rootfs.uzip lives at the root of the cd9660 (placed there by build.sh's
 # generate_iso). geom_uzip auto-tastes /dev/md0 and produces /dev/md0.uzip.
+echo "[init.sh] mdconfig /rootfs.uzip"
 mdconfig -a -t vnode -o readonly -f /rootfs.uzip -u 0
+echo "[init.sh] waiting for /dev/md0.uzip"
 i=0
 while [ ! -e /dev/md0.uzip ]; do
     sleep 1
     i=$((i+1))
     if [ "$i" -gt 30 ]; then
-        echo "ERROR: /dev/md0.uzip never appeared" > /dev/console
-        ls -la /dev/md* 2>/dev/null > /dev/console || true
+        echo "[init.sh] ERROR: /dev/md0.uzip never appeared"
+        ls -la /dev/md* 2>/dev/null || true
         halt -p
     fi
 done
+echo "[init.sh] /dev/md0.uzip appeared after ${i}s"
 
 # === Layer the writable upper over the read-only lower ===
 # /sysroot and /upper are pre-created on the cd9660 by build.sh. tmpfs has
 # no fixed size — pages allocate on demand from VM, spill to swap under
 # pressure. Writes to /sysroot land in /upper (CoW); reads fall through
 # to the uzip.
-mount -t ufs -o ro /dev/md0.uzip /sysroot
-mount -t tmpfs tmpfs /upper
-mount -t unionfs /upper /sysroot
-mount -t devfs devfs /sysroot/dev
+echo "[init.sh] mount ufs /dev/md0.uzip -> /sysroot (lower)"
+mount -t ufs -o ro /dev/md0.uzip /sysroot || { echo "[init.sh] FAIL: ufs mount"; halt -p; }
+echo "[init.sh] mount tmpfs -> /upper (writable)"
+mount -t tmpfs tmpfs /upper            || { echo "[init.sh] FAIL: tmpfs mount"; halt -p; }
+echo "[init.sh] mount unionfs /upper -> /sysroot (combined)"
+mount -t unionfs /upper /sysroot       || { echo "[init.sh] FAIL: unionfs mount"; halt -p; }
+echo "[init.sh] mount devfs -> /sysroot/dev"
+mount -t devfs devfs /sysroot/dev      || { echo "[init.sh] FAIL: devfs mount"; halt -p; }
+echo "[init.sh] cascade complete"
 
 # === Gershwin live-mode tweaks (post-mount, pre-chroot) ===
 # All paths target /sysroot/... since that's where the writable union
@@ -214,10 +227,12 @@ conscontrol mute on >/dev/null 2>&1
 # init.c reads init_chroot kenv at line 333, AFTER init_script (line
 # 326-331) has run. Setting init_chroot here is what makes the chroot
 # happen.
+echo "[init.sh] setting init_chroot=/sysroot"
 kenv init_chroot=/sysroot
 
 # Unset init_script so init doesn't try to re-run us after the chroot.
 kenv -u init_script 2>/dev/null || true
 kenv -u init_shell  2>/dev/null || true
 
+echo "[init.sh] handing off to /sbin/init for chroot+multi-user"
 exit 0
