@@ -317,82 +317,73 @@ downsize_system() {
 }
 
 prepare_boot_env() {
-    log "Preparing boot environment..."
+    log "Preparing boot environment (unionfs init_chroot model)..."
     cd "${RELEASE_DIR}" && tar -cf - boot | tar -xf - -C "${CD_ROOT}"
-    mkdir -p \
-    "${CD_ROOT}/bin" \
-    "${CD_ROOT}/compat/linux/dev" \
-    "${CD_ROOT}/compat/linux/proc" \
-    "${CD_ROOT}/compat/linux/sys" \
-    "${CD_ROOT}/Developer" \
-    "${CD_ROOT}/dev" \
-    "${CD_ROOT}/etc" \
-    "${CD_ROOT}/home" \
-    "${CD_ROOT}/lib" \
-    "${CD_ROOT}/libexec" \
-    "${CD_ROOT}/Local" \
-    "${CD_ROOT}/media" \
-    "${CD_ROOT}/mnt" \
-    "${CD_ROOT}/net" \
-    "${CD_ROOT}/Network" \
-    "${CD_ROOT}/nvidia" \
-    "${CD_ROOT}/opt" \
-    "${CD_ROOT}/proc" \
-    "${CD_ROOT}/rescue" \
-    "${CD_ROOT}/root" \
-    "${CD_ROOT}/sbin" \
-    "${CD_ROOT}/sys" \
-    "${CD_ROOT}/System" \
-    "${CD_ROOT}/tmp" \
-    "${CD_ROOT}/usr" \
-    "${CD_ROOT}/uzip" \
-    "${CD_ROOT}/var"
+
+    # Minimal mountpoints needed by /init.sh's unionfs cascade. /sysroot
+    # is the merge target (uzip lower + tmpfs upper); /upper is the
+    # writable layer; /dev gets the cd9660-context devfs before we mount
+    # /sysroot/dev separately.
+    mkdir -p "${CD_ROOT}/sysroot" "${CD_ROOT}/upper" "${CD_ROOT}/dev"
+
     cp "${RELEASE_DIR}"/COPYRIGHT "${CD_ROOT}"/
-    chmod +x "${OVERLAYS_DIR}/boot/init_script"
+
+    # Drop /init.sh at the cdroot top-level. /sbin/init reads init_script
+    # kenv (set in /boot/loader.conf) and forks a child to run it.
+    chmod +x "${OVERLAYS_DIR}/init.sh"
+    cp "${OVERLAYS_DIR}/init.sh" "${CD_ROOT}/init.sh"
+
+    # Boot overlay (loader.conf, lua menu, loader.mute.d).
     cp -R "${OVERLAYS_DIR}/boot" "${CD_ROOT}"
     cat "${CD_ROOT}"/boot/loader.conf
-    # Remove all modules from the ISO that are not required before the root filesystem is mounted
-    # The whole directory /boot/modules is unnecessary
+
+    # Remove modules not used before /init.sh's unionfs cascade. unionfs
+    # is needed at boot now (loader.conf preloads it; init.sh kldloads
+    # defensively); add it to the keep list.
     rm -rf "${CD_ROOT}"/boot/modules/*
-    # Remove modules in /boot/kernel that are not loaded at boot time
     find "${CD_ROOT}"/boot/kernel -name '*.ko' \
     -not -name 'cryptodev.ko' \
     -not -name 'firewire.ko' \
     -not -name 'geom_uzip.ko' \
     -not -name 'tmpfs.ko' \
+    -not -name 'unionfs.ko' \
     -not -name 'xz.ko' \
     -delete
+
     # Compress the kernel
     gzip -f "${CD_ROOT}"/boot/kernel/kernel || true
     rm "${CD_ROOT}"/boot/kernel/kernel || true
-    # Compress the modules in a way the kernel understands
     find "${CD_ROOT}"/boot/kernel -type f -name '*.ko' -exec gzip -f {} \;
     find "${CD_ROOT}"/boot/kernel -type f -name '*.ko' -delete
-    cp "${RELEASE_DIR}"/etc/login.conf  "${CD_ROOT}"/etc/ # Workaround for: init: login_getclass: unknown class 'daemon'
-    tar -cf - rescue | tar -xf - -C "${CD_ROOT}" # /rescue is full of hardlinks
-    # Replace identical files with symlinks in rescue
-    fdupes -r -S -N "${CD_ROOT}/rescue" || true # -N means do not prompt for confirmation
+
+    # /rescue is needed on the cd9660 because init.sh's shebang is
+    # #!/rescue/sh and the kernel exec's /rescue/init (since /sbin/init
+    # isn't on the cd9660). Hardlink-deduped with fdupes; Rock Ridge
+    # preserves links across cd9660.
+    tar -cf - rescue | tar -xf - -C "${CD_ROOT}"
+    fdupes -r -S -N "${CD_ROOT}/rescue" || true
     ls -lh "${CD_ROOT}/rescue"
 
-    # Comment out splash so that we get the non-color picture built into the kernel instead of a color picture
-    # that doesn't match our color scheme
+    # Comment out splash so we get the non-color kernel picture instead
+    # of a color one that doesn't match our color scheme.
     sed -i '' -e 's|^splash|# splash|g' "${CD_ROOT}"/boot/loader.conf
-    
-    # Must not try to load tmpfs module in FreeBSD 13 and later, 
-    # because it will prevent the one in the kernel from working
+
+    # Must not try to load tmpfs module in FreeBSD 13 and later because
+    # it would prevent the one in the kernel from working.
     sed -i '' -e 's|^tmpfs_load|# load_tmpfs_load|g' "${CD_ROOT}"/boot/loader.conf
-    rm "${CD_ROOT}"/boot/kernel/tmpfs.ko*
+    rm "${CD_ROOT}"/boot/kernel/tmpfs.ko* 2>/dev/null || true
     cd -
-    
+
     # https://github.com/freebsd/freebsd-src/blob/5bffa1d2069a05c8346eb34e17a39085fe0bf09b/sbin/init/init.c#L1061
-    chmod 755 "${CD_ROOT}/boot/init_script"
+    chmod 755 "${CD_ROOT}/init.sh"
 }
 
 generate_iso() {
     log "Creating live image (uzip)..."
     ( cd "${RELEASE_DIR}" ; makefs -b 75% -f 75% -R 262144 "${CD_ROOT}/rootfs.ufs" . )
-    mkdir -p "${CD_ROOT}/boot"
-    mkuzip -A zstd -C 12 -d -o "${CD_ROOT}/boot/rootfs.uzip" "${CD_ROOT}/rootfs.ufs"
+    # /rootfs.uzip lives at the cdroot top-level (not /boot/rootfs.uzip) —
+    # /init.sh mdconfig-mounts it from /rootfs.uzip directly.
+    mkuzip -A zstd -C 12 -d -o "${CD_ROOT}/rootfs.uzip" "${CD_ROOT}/rootfs.ufs"
     rm -f "${CD_ROOT}/rootfs.ufs"
 
     log "Generating final ISO image..."
