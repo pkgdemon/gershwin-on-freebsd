@@ -24,13 +24,22 @@
 # Adapted from probono/freebsd-livecd-unionfs init.sh (BSD-2-Clause)
 # and the previous gershwin-on-freebsd /boot/init_script.
 
-# === Output handling — runs FIRST so everything below is visible ===
-# /sbin/init (and /rescue/init) hand children stderr/stdout that may
-# not be /dev/console — without this, all our shell output goes to a
-# void and the boot LOOKS silent right after the kernel hands off.
-# Kernel printf messages (GEOM_LABEL etc.) come through because they're
-# written by the kernel directly, not by us.
-exec >/dev/console 2>&1
+# === Mount devfs FIRST, then redirect stdio ===
+# /sbin/init's open_console() runs BEFORE init mounts devfs at /dev
+# (init.c:326-389 reads init_script before mounting /dev), so when init
+# tries to open /dev/console for our child it falls back to /var/log/
+# init.log (which doesn't exist on read-only cd9660) → /dev/null dup.
+# Our inherited stdio is therefore /dev/null, and every echo we make is
+# invisible. Kernel printf bypasses /dev/console (writes via cnputc to
+# the registered console drivers directly), so kernel messages still
+# appear — but our shell output doesn't.
+#
+# Fix: mount devfs ourselves first, then re-exec stdio onto the now-
+# real /dev/console. After this, every echo is visible. init.c's later
+# devfs-mount check (line 343) detects /dev is already mounted and
+# skips, so no double mount.
+mount -t devfs devfs /dev 2>/dev/null
+exec </dev/console >/dev/console 2>&1
 echo "[init.sh] starting"
 
 # === Monkey patch from kenv (early — runs before unionfs setup) ===
