@@ -2,6 +2,7 @@ bwi-firmware-kmod
 bwn-firmware-kmod
 drm-kmod
 egl-wayland
+gpu-firmware-kmod
 realtek-re-kmod
 utouch-kmod
 wifi-firmware-kmod
