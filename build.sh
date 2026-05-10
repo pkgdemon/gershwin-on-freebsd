@@ -384,62 +384,121 @@ downsize_system() {
 
 prepare_boot_env() {
     log "Preparing boot environment (unionfs init_chroot model)..."
-    cd "${RELEASE_DIR}" && tar -cf - boot | tar -xf - -C "${CD_ROOT}"
 
-    # Minimal mountpoints needed by /init.sh's unionfs cascade. /sysroot
-    # is the merge target (uzip lower + tmpfs upper); /upper is the
-    # writable layer; /dev gets the cd9660-context devfs before we mount
+    # Stage minimal /boot on cd9660 file-by-file, mirroring the
+    # freebsd-launchd pattern (build.sh:481-541). Three benefits over
+    # the previous "tar everything from RELEASE_DIR/boot, then prune"
+    # approach:
+    #   1. /boot/firmware never gets created on cd9660 as a real
+    #      directory, so the symlink to /sysroot/boot/firmware lands
+    #      cleanly via plain `ln -s`. The previous tar-pipe pulled in
+    #      base.txz's /boot/firmware/ tree as a directory; `ln -sf`
+    #      against an existing directory creates a useless nested
+    #      symlink (${CD_ROOT}/boot/firmware/firmware), invisible to
+    #      kernel-namei's lookup of /boot/firmware/<file>. Hence:
+    #      AMD Renoir / iwlwifi firmware loads still fail.
+    #   2. cd9660 is much smaller. base.txz's /boot is hundreds of MB
+    #      across base firmware, GENERIC's ~80 .ko modules, debug
+    #      symbols, etc. Only the bootloader stage and a handful of
+    #      preload modules need to live outside rootfs.uzip; the rest
+    #      is reached via unionfs after pivot.
+    #   3. Whitelist is auditable. "Copy everything then delete most of
+    #      it" obscured what actually had to be on cd9660 vs. what was
+    #      incidental. This makes the contract explicit.
+
+    mkdir -p "${CD_ROOT}/boot/kernel"
+
+    # Bootloader binaries + lua scripts + fonts. Conditional copies —
+    # not all entries exist on every release/arch. cdboot/isoboot/pmbr
+    # = legacy BIOS chains; loader_lua / loader_lua.efi = current
+    # FreeBSD primary loader; loader_simp{,.efi} = simplified fallback;
+    # boot1.efi / gptboot = stage-1 EFI / GPT loaders; defaults/ holds
+    # the system loader.conf the project's overlay loader.conf
+    # `include`s; device.hints feeds the kernel's hardware probe; lua/
+    # is the loader's Lua tree; fonts/ powers the boot menu typography.
+    for f in cdboot loader loader.efi loader_lua loader_lua.efi \
+             loader_simp loader_simp.efi pmbr isoboot boot1.efi \
+             gptboot defaults device.hints lua fonts; do
+        if [ -e "${RELEASE_DIR}/boot/$f" ]; then
+            cp -aR "${RELEASE_DIR}/boot/$f" "${CD_ROOT}/boot/"
+        fi
+    done
+
+    # Kernel binary, gzipped. The loader's gzipfs layer detects the .gz
+    # extension and decompresses transparently on read (same pattern
+    # mfsBSD uses).
+    gzip -9c "${RELEASE_DIR}/boot/kernel/kernel" \
+        > "${CD_ROOT}/boot/kernel/kernel.gz"
+    ls -lh "${CD_ROOT}/boot/kernel/kernel.gz" \
+           "${RELEASE_DIR}/boot/kernel/kernel"
+
+    # Modules needed BEFORE /init.sh's unionfs cascade — i.e. before
+    # the running kernel can reach into rootfs.uzip. Everything else
+    # (~80 GENERIC .ko modules) lives only in rootfs.uzip and gets
+    # kldloaded post-pivot, either by loader.conf preloads against the
+    # uzip-mounted /boot/kernel/, or by kmodloader at runtime.
+    #
+    #   geom_uzip   — required to mdconfig-mount rootfs.uzip
+    #   unionfs     — required for the cascade in init.sh
+    #   xz          — loader.conf may preload xz-compressed modules
+    #   cryptodev   — preserved from previous configuration; loaded
+    #                 early on systems using GELI-encrypted partitions
+    #                 (irrelevant on the live ISO, but harmless)
+    #   firewire    — preserved from previous configuration; legacy
+    #                 IEEE-1394 storage edge case
+    #
+    # Each gets gzipped after copy: same loader gzipfs trick as the
+    # kernel.
+    BOOT_MODULES="geom_uzip.ko unionfs.ko xz.ko cryptodev.ko firewire.ko"
+    for m in ${BOOT_MODULES}; do
+        if [ -f "${RELEASE_DIR}/boot/kernel/$m" ]; then
+            cp "${RELEASE_DIR}/boot/kernel/$m" "${CD_ROOT}/boot/kernel/"
+            gzip -f "${CD_ROOT}/boot/kernel/$m"
+        fi
+    done
+
+    # Mountpoints needed by /init.sh's unionfs cascade. /sysroot is the
+    # merge target (uzip lower + tmpfs upper); /upper is the writable
+    # layer; /dev gets the cd9660-context devfs before we mount
     # /sysroot/dev separately. /etc exists for mkisoimages.sh, which
     # writes a transient /etc/fstab during ISO mastering and removes it
     # immediately — the dir needs to exist or the redirect fails.
-    mkdir -p "${CD_ROOT}/sysroot" "${CD_ROOT}/upper" "${CD_ROOT}/dev" "${CD_ROOT}/etc"
+    mkdir -p "${CD_ROOT}/sysroot" "${CD_ROOT}/upper" \
+             "${CD_ROOT}/dev" "${CD_ROOT}/etc"
 
-    cp "${RELEASE_DIR}"/COPYRIGHT "${CD_ROOT}"/
+    cp "${RELEASE_DIR}/COPYRIGHT" "${CD_ROOT}/"
 
     # Drop /init.sh at the cdroot top-level. /sbin/init reads init_script
     # kenv (set in /boot/loader.conf) and forks a child to run it.
     chmod +x "${OVERLAYS_DIR}/init.sh"
     cp "${OVERLAYS_DIR}/init.sh" "${CD_ROOT}/init.sh"
 
-    # Boot overlay (loader.conf, lua menu, loader.mute.d).
+    # Boot overlay (loader.conf, lua/local.lua, loader.mute.d). Layered
+    # ON TOP of the bootloader files we just staged from RELEASE_DIR —
+    # cp -R merges into the existing tree, so the overlay's loader.conf
+    # replaces the base one while shared subtrees (defaults/, lua/) get
+    # overlay files added without losing the originals.
     cp -R "${OVERLAYS_DIR}/boot" "${CD_ROOT}"
-    cat "${CD_ROOT}"/boot/loader.conf
+    cat "${CD_ROOT}/boot/loader.conf"
 
-    # Remove modules not used before /init.sh's unionfs cascade. unionfs
-    # is needed at boot now (loader.conf preloads it; init.sh kldloads
-    # defensively); add it to the keep list.
-    rm -rf "${CD_ROOT}"/boot/modules/*
-    find "${CD_ROOT}"/boot/kernel -name '*.ko' \
-    -not -name 'cryptodev.ko' \
-    -not -name 'firewire.ko' \
-    -not -name 'geom_uzip.ko' \
-    -not -name 'tmpfs.ko' \
-    -not -name 'unionfs.ko' \
-    -not -name 'xz.ko' \
-    -delete
-
-    # Compress the kernel
-    gzip -f "${CD_ROOT}"/boot/kernel/kernel || true
-    rm "${CD_ROOT}"/boot/kernel/kernel || true
-    find "${CD_ROOT}"/boot/kernel -type f -name '*.ko' -exec gzip -f {} \;
-    find "${CD_ROOT}"/boot/kernel -type f -name '*.ko' -delete
-
-    # /rescue is needed on the cd9660 because init.sh's shebang is
-    # #!/rescue/sh and the kernel exec's /rescue/init (since /sbin/init
-    # isn't on the cd9660). Hardlink-deduped with fdupes; Rock Ridge
-    # preserves links across cd9660.
-    tar -cf - rescue | tar -xf - -C "${CD_ROOT}"
+    # /rescue: needed on cd9660 because init.sh's shebang is /rescue/sh
+    # and the kernel exec's /rescue/init (since /sbin/init isn't on the
+    # cd9660). Hardlink-deduped with fdupes; Rock Ridge preserves links
+    # across cd9660. Subshell for the cd so we don't pollute the
+    # function's working directory.
+    ( cd "${RELEASE_DIR}" && tar -cf - rescue ) | tar -xf - -C "${CD_ROOT}"
     fdupes -r -S -N "${CD_ROOT}/rescue" || true
     ls -lh "${CD_ROOT}/rescue"
 
     # Comment out splash so we get the non-color kernel picture instead
     # of a color one that doesn't match our color scheme.
-    sed -i '' -e 's|^splash|# splash|g' "${CD_ROOT}"/boot/loader.conf
+    sed -i '' -e 's|^splash|# splash|g' "${CD_ROOT}/boot/loader.conf"
 
-    # Must not try to load tmpfs module in FreeBSD 13 and later because
-    # it would prevent the one in the kernel from working.
-    sed -i '' -e 's|^tmpfs_load|# load_tmpfs_load|g' "${CD_ROOT}"/boot/loader.conf
-    rm "${CD_ROOT}"/boot/kernel/tmpfs.ko* 2>/dev/null || true
+    # Must not try to load tmpfs module in FreeBSD 13 and later — the
+    # in-kernel tmpfs is preferred and a kld attempt will fail. We
+    # never copy tmpfs.ko into cdroot (it's not in BOOT_MODULES), so
+    # only the loader.conf comment-out is needed; no rm necessary.
+    sed -i '' -e 's|^tmpfs_load|# load_tmpfs_load|g' "${CD_ROOT}/boot/loader.conf"
 
     # /boot/firmware on the cd9660 → symlink to /sysroot/boot/firmware
     # (where the unionfs mounts the rootfs.uzip layer at boot, with all
@@ -461,16 +520,14 @@ prepare_boot_env() {
     #   2. cd9660:/sysroot is the unionfs mount point
     #   3. namei traverses into the unionfs view
     #   4. Finds the file in the rootfs.uzip layer
-    # Costs ~0 bytes on the cd9660 (just a symlink). Rock Ridge on
-    # cd9660 (already enabled via mkisoimages.sh) preserves symlinks
-    # correctly. Target uses the standard init.sh mount point /sysroot.
+    # Costs ~0 bytes on the cd9660. Rock Ridge on cd9660 (already
+    # enabled via mkisoimages.sh) preserves symlinks correctly.
     #
-    # Backport of freebsd-launchd commit 51e1b80 (originally discovered
-    # on iwlwifi-8000C-36.ucode; same architecture so applies verbatim).
-    ln -sf /sysroot/boot/firmware "${CD_ROOT}/boot/firmware"
+    # Plain `ln -s` (no -f) is sufficient now that we build cdroot/boot
+    # file-by-file: /boot/firmware is never created as a directory in
+    # the first place, so there's nothing to overwrite.
+    ln -s /sysroot/boot/firmware "${CD_ROOT}/boot/firmware"
     ls -la "${CD_ROOT}/boot/firmware" || true
-
-    cd -
 
     # https://github.com/freebsd/freebsd-src/blob/5bffa1d2069a05c8346eb34e17a39085fe0bf09b/sbin/init/init.c#L1061
     chmod 755 "${CD_ROOT}/init.sh"
