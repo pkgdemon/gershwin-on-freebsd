@@ -440,6 +440,36 @@ prepare_boot_env() {
     # it would prevent the one in the kernel from working.
     sed -i '' -e 's|^tmpfs_load|# load_tmpfs_load|g' "${CD_ROOT}"/boot/loader.conf
     rm "${CD_ROOT}"/boot/kernel/tmpfs.ko* 2>/dev/null || true
+
+    # /boot/firmware on the cd9660 → symlink to /sysroot/boot/firmware
+    # (where the unionfs mounts the rootfs.uzip layer at boot, with all
+    # pkg-installed firmware files inside).
+    #
+    # Why: kernel-context vn_open in subr_firmware.c's try_binary_file()
+    # does namei against the kernel's root namespace, which is the
+    # cd9660 mount — NOT the chroot the userspace processes see. Files
+    # visible at /boot/firmware/ in chroot view are invisible to kernel
+    # firmware loading. Result without this symlink: iwlwifi/i915kms/
+    # amdgpu attach but firmware-load fails with "File size way too
+    # small!" or "could not load binary firmware …", and on AMD Renoir
+    # specifically drm-kmod's fini_hw NULL-derefs in
+    # unregister_fictitious_range → kernel panic during kldload amdgpu.
+    #
+    # The symlink turns kernel-namei's lookup of /boot/firmware/<file>
+    # into a follow-through-mount-point chain:
+    #   1. cd9660:/boot/firmware → symlink → /sysroot/boot/firmware
+    #   2. cd9660:/sysroot is the unionfs mount point
+    #   3. namei traverses into the unionfs view
+    #   4. Finds the file in the rootfs.uzip layer
+    # Costs ~0 bytes on the cd9660 (just a symlink). Rock Ridge on
+    # cd9660 (already enabled via mkisoimages.sh) preserves symlinks
+    # correctly. Target uses the standard init.sh mount point /sysroot.
+    #
+    # Backport of freebsd-launchd commit 51e1b80 (originally discovered
+    # on iwlwifi-8000C-36.ucode; same architecture so applies verbatim).
+    ln -sf /sysroot/boot/firmware "${CD_ROOT}/boot/firmware"
+    ls -la "${CD_ROOT}/boot/firmware" || true
+
     cd -
 
     # https://github.com/freebsd/freebsd-src/blob/5bffa1d2069a05c8346eb34e17a39085fe0bf09b/sbin/init/init.c#L1061
